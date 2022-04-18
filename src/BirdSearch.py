@@ -29,6 +29,7 @@ import numpy as np
 # Standard Library Modules
 import argparse
 import os
+
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Credit goes to ptrblack for this class: https://discuss.pytorch.org/t/why-do-we-need-subsets-at-all/49391/7
 # This class allows for easier application of different transforms to datasets. Used in the load_split_train_valid_test method
@@ -145,20 +146,13 @@ def load_split_train_test_valid(datadir, test_size=.15, valid_size=.15, normaliz
 def main():
     """  n = int(input("Which bird image would you like to look at: "))
     boxing_data = pd.read_csv("data/CUB_200_2011/bounding_boxes.txt", sep=" ", index_col=False)
-    boxing_data_first = boxing_data.iloc[0]
 
     boxing_data_n= boxing_data.iloc[n]
     parts_data = pd.read_csv("data/CUB_200_2011/parts/part_locs.txt", sep=" ", index_col=False)
     image_names = pd.read_csv("data/CUB_200_2011/images.txt", sep=" ", index_col=False)
-    parts_data_first = parts_data.head(15)  
     parts_data_n = parts_data.iloc[(15*n):(15*n + 15)] """
     
-    """    Test plots of input data
-    # Test plot with first bird image
-    
-    image_name = image_names[image_names["image_id"]==1]["image_name"].to_string(index=False)   # Get local file name
-    display_image(io.imread(os.path.join("data\CUB_200_2011\images", image_name)), boxing_data_first, parts_data_first, False)
-    
+    """ 
     # Test plot with second bird image
     image_name = image_names[image_names["image_id"]==n+1]["image_name"].to_string(index=False)   # Get local file name
     display_image(io.imread(os.path.join("data\CUB_200_2011\images", image_name)), boxing_data_n, parts_data_n, False)
@@ -166,9 +160,9 @@ def main():
 
 
     # Import and process data
-    data_dir = '../data/CUB_200_2011/images'
+    data_dir = '../data/CUB_200_2011/cropped_images'
     
-    # Build training/test sets randomly
+    # Build training/test sets randomly, applying the appropriate transformations to each set of images (normalization, cropping, etc.)
     train_loader, test_loader, valid_loader = load_split_train_test_valid(data_dir, .2)
     print(train_loader.dataset)
 
