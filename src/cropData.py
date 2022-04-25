@@ -1,4 +1,4 @@
-# Crops all images found in the original images directory according to their bounding box, maining the original
+# Crops all images found in the original images directory according to their bounding box, maintaining the original
 # structure of images.
 
 from PIL import Image
