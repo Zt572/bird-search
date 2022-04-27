@@ -81,6 +81,14 @@ def display_image(image, box_data, parts_data, show_hidden_parts=False):
     plt.show()
 
 
+'''A newly defined collate function to work around a collation error when running batch sizes greater than 1. The original collation
+resulted in a RunTimeError caused by trying to resize storage that is not resizable (in other words, the Tensors within each batch had different
+shapes, most likely a result of one or more being empty or None). This solution is credited to ptrblack and Sehaba95 on the PyTorch forums.'''
+def collate_fn(batch):
+    batch = list(filter(lambda x: x is not None, batch))        # Convert batch into a collate-able list, filtering out any empty Tensors    
+    return torch.utils.data.dataloader.default_collate(batch)   # Pass list to default collate method and return the result
+
+
 # Note: The default normalize mean and std values are those for the RGB of ImageNet
 def load_split_train_test_valid(datadir, test_size=.15, valid_size=.15, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     try:
@@ -94,11 +102,11 @@ def load_split_train_test_valid(datadir, test_size=.15, valid_size=.15, normaliz
         print("test_size and valid_size must be non-negative, less than 1, and their sum must be less than 1.")
         exit(1)
     
-    train_transforms = transforms.Compose([transforms.Resize(224),  # Transform for training
+    train_transforms = transforms.Compose([transforms.Resize((224, 224)),  # Transform for training
                                         transforms.ToTensor(),
                                         transforms.Normalize(normalize_mean, normalize_std)])
 
-    test_valid_transforms = transforms.Compose([transforms.Resize(224), # Transform for test/validation
+    test_valid_transforms = transforms.Compose([transforms.Resize((224, 224)), # Transform for test/validation
                                         transforms.ToTensor(),
                                         transforms.Normalize(normalize_mean, normalize_std)])
 
@@ -130,9 +138,9 @@ def load_split_train_test_valid(datadir, test_size=.15, valid_size=.15, normaliz
     batch_size = 64
     num_workers = 4
 
-    train_loader = DataLoader(train_data, batch_size=batch_size, num_workers=num_workers, drop_last=True)
-    test_loader = DataLoader(test_data, batch_size=batch_size, num_workers=num_workers, drop_last=True)
-    valid_loader = DataLoader(valid_data, batch_size=batch_size, num_workers=num_workers, drop_last=True)
+    train_loader = DataLoader(train_data, batch_size=batch_size, num_workers=num_workers, drop_last=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_data, batch_size=batch_size, num_workers=num_workers, drop_last=True, collate_fn=collate_fn)
+    valid_loader = DataLoader(valid_data, batch_size=batch_size, num_workers=num_workers, drop_last=True, collate_fn=collate_fn)
 
 
     """    train_data, test_data, valid_data = random_split(
@@ -208,17 +216,31 @@ def main():
         print("Must be a positive integer. Using default number of epochs instead (20)")
         num_epochs = 20
 
-    # Store training loss over time
+    # Store loss over epochs during training and validation
     loss_stats = {
         'train': [],
         "val": []
     }
 
-    for epoch in range(1, num_epochs):
-        # Training:
-        train_epoch_loss = 0  # Tracks loss over the epoch
-        epoch_losses = []     # Used to store current epoch losses for learning rate scheduler calculation
+    # Store accuracy over epochs during training and validation
+    acc_stats = {
+        'train': [],
+        "val": []
+    }
+
+
+    # Track epoch number
+    iters = []  
+
+    print("Beginning training.")
+    for epoch_num in range(0, num_epochs):
+        train_epoch_loss = 0    # Tracks loss over the epoch
+        train_epoch_correct = 0 # Tracks accuracy over the epoch
+        epoch_losses = []       # Used to store current epoch losses for learning rate scheduler calculation
+
+        print(f"Training for Epoch {epoch_num}...")
         for batch_inx, (data, targets) in enumerate(train_loader):
+            print(f"\tBatch {batch_inx} starting...")
             data = data.to(device)   # Utilize CUDA if available
             targets = targets.to(device)
 
@@ -241,35 +263,68 @@ def main():
             # Combine current training loss to epoch losses
             epoch_losses.append(train_loss.item())
             train_epoch_loss += train_loss.item()
+            train_epoch_correct += (output == targets).float().sum()    # Count number of correct labels
+            iters.append(epoch_num)
 
-        # Calculations for the learning rate scheduler
-        mean_loss = sum(epoch_losses)/len(epoch_losses)
-        scheduler.step(mean_loss)   # See if the learning rate needs to adapt
-        print(f"Training loss at epoch {epoch} is {mean_loss}")
+        # Calculate overall loss/acc for the batch
+        mean_epoch_loss = sum(epoch_losses)/len(epoch_losses)
+        train_accuracy = 100 * train_epoch_correct/len(train_loader)
+
+        # Update learning rate scheduler before next batch
+        scheduler.step(mean_epoch_loss)   # See if the learning rate needs to adapt
+        print(f"Epoch {epoch_num} finished training; moving on to validation...")
 
         # Validation
         with torch.no_grad():
-            val_epoch_loss = 0
+            val_epoch_loss = 0      # Tracks loss over the epoch during validation
+            val_epoch_correct = 0   # Tracks accuracy over the epoch during validation
             model.eval()
 
             for batch_inx, (data, targets) in enumerate(valid_loader):
                 data = data.to(device)
                 targets = targets.to(device)
 
+                output = model(data)    # Obtain classification guess from model
+
                 y_val_pred = model(data)
                 val_loss = criterion(y_val_pred, targets)
                 val_epoch_loss += val_loss.item()
 
+                val_epoch_correct += (output == targets).float().sum()    # Count number of correct labels using validation set
+
+        # Calculate validation accuracy
+        val_accuracy = 100 * val_epoch_correct/len(valid_loader)
+
+        # Append loss and accuracy stats to respective dictionaries before next epoch
         loss_stats['train'].append(train_epoch_loss/len(train_loader))
         loss_stats['val'].append(val_epoch_loss/len(valid_loader))
+        acc_stats['train'].append(train_accuracy)
+        acc_stats['val'].append(val_accuracy)
 
         # Display current epoch, training loss, and validation loss
-        print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(valid_loader):.5f}')
+        print(f'Epoch {epoch_num+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(valid_loader):.5f}')
   
-    # Visualize Loss and Accuracy
-    train_val_loss_df = pd.DataFrame.from_dict(loss_stats).reset_index().melt(id_vars=['index']).rename(columns={"index":"epochs"})
-    plt.figure(figsize=(15,8))
-    sns.lineplot(data=train_val_loss_df, x = "epochs", y="value", hue="variable").set_title('Train-Val Loss/Epoch')
+    # Visualize Training/Validation Loss and Accuracy
+    plt.plot(iters, loss_stats['train'], label='training')
+    plt.plot(iters, loss_stats['val'], label='validation')
+    plt.title("Training/Validation Loss")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.show()
+
+    plt.clf()   # Clear figure
+
+    plt.plot(iters, acc_stats['train'], label='training')
+    plt.plot(iters, acc_stats['val'], label='validation')
+    plt.title("Training/Validation Accuracy")
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy")
+    plt.show()
+
+
+    #train_val_loss_df = pd.DataFrame.from_dict(loss_stats).reset_index().melt(id_vars=['index']).rename(columns={"index":"epochs"})
+    #plt.figure(figsize=(15,8))
+    #sns.lineplot(data=train_val_loss_df, x = "epochs", y="value", hue="variable").set_title('Train-Val Loss/Epoch')
 
     # Save model and scheduler to file
     save_model_path = "../model/vgg16_bird.pth"
